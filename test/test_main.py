@@ -2,11 +2,24 @@
 import pytest
 from fastapi.testclient import TestClient
 
+SAMPLE_REQUEST = {
+    "NO2": 45.2,
+    "NO": 12.1,
+    "CO": 1.5,
+    "SO2": 8.0,
+    "O3": 35.0,
+    "PM10": 120.0,
+    "Benzene": 2.1,
+    "Toluene": 5.3,
+    "Xylene": 1.2,
+    "NH3": 18.0,
+}
+
 
 @pytest.fixture
 def init_test_client(monkeypatch) -> TestClient:
     def mock_make_inference(*args, **kwargs) -> dict[str, float]:
-        return {"mpg": 48.239}
+        return {"pm25": 87.432}
 
     def mock_load_model(*args, **kwargs) -> None:
         return None
@@ -29,19 +42,17 @@ def test_token_correctness(init_test_client) -> None:
     response = init_test_client.post(
         "/predictions",
         headers={"Authorization": "Bearer 00000"},
-        json={"cylinders": 0, "displacement": 0, "horsepower": 0,
-              "weight": 0, "acceleration": 0, "model_year": 0, "origin": 0}
+        json=SAMPLE_REQUEST,
     )
     assert response.status_code == 200
-    assert "mpg" in response.json()
+    assert "pm25" in response.json()
 
 
 def test_token_not_correctness(init_test_client):
     response = init_test_client.post(
         "/predictions",
         headers={"Authorization": "Bearer kedjkj"},
-        json={"cylinders": 0, "displacement": 0, "horsepower": 0,
-              "weight": 0, "acceleration": 0, "model_year": 0, "origin": 0}
+        json=SAMPLE_REQUEST,
     )
     assert response.status_code == 401
     assert response.json() == {
@@ -52,8 +63,7 @@ def test_token_not_correctness(init_test_client):
 def test_token_absent(init_test_client):
     response = init_test_client.post(
         "/predictions",
-        json={"cylinders": 0, "displacement": 0, "horsepower": 0,
-              "weight": 0, "acceleration": 0, "model_year": 0, "origin": 0}
+        json=SAMPLE_REQUEST,
     )
     assert response.status_code == 401
     assert response.json() == {
@@ -65,9 +75,7 @@ def test_inference(init_test_client):
     response = init_test_client.post(
         "/predictions",
         headers={"Authorization": "Bearer 00000"},
-        json={"cylinders": 4, "displacement": 113.0, "horsepower": 95.0,
-              "weight": 2228.0, "acceleration": 14.0, "model_year": 71,
-              "origin": 3}
+        json=SAMPLE_REQUEST,
     )
     assert response.status_code == 200
-    assert response.json()["mpg"] == 48.239
+    assert response.json()["pm25"] == 87.432

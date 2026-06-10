@@ -1,4 +1,4 @@
-name: Inference Service Unit Testing
+name: PM2.5 Inference Service Testing
 
 on:
   push:

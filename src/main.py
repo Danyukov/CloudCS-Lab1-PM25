@@ -1,22 +1,35 @@
 # -*- coding: utf-8 -*-
 import os
-from model_utils import load_model, make_inference
+from typing import Optional
+
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 
+from model_utils import FEATURE_COLUMNS, load_model, make_inference
+
 
 class Instance(BaseModel):
-    cylinders: int
-    displacement: float
-    horsepower: float
-    weight: float
-    acceleration: float
-    model_year: int
-    origin: int
+    NO2: Optional[float] = None
+    NO: Optional[float] = None
+    CO: Optional[float] = None
+    SO2: Optional[float] = None
+    O3: Optional[float] = None
+    PM10: Optional[float] = None
+    Benzene: Optional[float] = None
+    Toluene: Optional[float] = None
+    Xylene: Optional[float] = None
+    NH3: Optional[float] = None
 
 
-app = FastAPI()
+app = FastAPI(
+    title="PM2.5 Inference Service",
+    description=(
+        "Synchronous inference for Delhi air quality: predict PM2.5 "
+        f"from pollutant readings ({', '.join(FEATURE_COLUMNS)})."
+    ),
+    version="1.0.0",
+)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth")
 model_path: str = os.getenv("MODEL_PATH")
@@ -44,6 +57,8 @@ def healthcheck() -> dict[str, str]:
 
 
 @app.post("/predictions")
-async def predictions(instance: Instance,
-                      token: str = Depends(check_token)) -> dict[str, float]:
+async def predictions(
+    instance: Instance,
+    token: str = Depends(check_token),
+) -> dict[str, float]:
     return make_inference(load_model(model_path), instance.dict())
