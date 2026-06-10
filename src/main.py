@@ -3,7 +3,7 @@ import os
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
 from model_utils import FEATURE_COLUMNS, load_model, make_inference
@@ -49,6 +49,17 @@ async def check_token(token: str = Depends(oauth2_scheme)) -> None:
             detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+@app.post("/auth")
+async def auth(form: OAuth2PasswordRequestForm = Depends()) -> dict[str, str]:
+    """Issue access token for Swagger OAuth2 and API clients."""
+    if form.password != "00000":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+        )
+    return {"access_token": "00000", "token_type": "bearer"}
 
 
 @app.get("/healthcheck")
