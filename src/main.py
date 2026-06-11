@@ -3,9 +3,11 @@ import os
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from keycloak.uma_permissions import AuthStatus
 from pydantic import BaseModel
 
+from fastapi_utils import Oauth2ClientCredentials
+from keycloak_utils import get_keycloak_data
 from model_utils import FEATURE_COLUMNS, load_model, make_inference
 
 
@@ -25,41 +27,37 @@ class Instance(BaseModel):
 app = FastAPI(
     title="PM2.5 Inference Service",
     description=(
-        "Synchronous inference for Delhi air quality: predict PM2.5 "
-        f"from pollutant readings ({', '.join(FEATURE_COLUMNS)})."
+        "Containerized inference for Delhi air quality with Keycloak auth. "
+        f"Features: {', '.join(FEATURE_COLUMNS)}."
     ),
-    version="1.0.0",
+    version="2.0.0",
 )
+keycloak_openid, token_endpoint = get_keycloak_data()
+oauth2_scheme = Oauth2ClientCredentials(tokenUrl=token_endpoint)
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth")
 model_path: str = os.getenv("MODEL_PATH")
 if model_path is None:
     raise ValueError("The environment variable $MODEL_PATH is empty!")
 
 
-async def is_token_correct(token: str) -> bool:
-    dummy_correct_token = "00000"
-    return token == dummy_correct_token
+async def get_token_status(token: str) -> AuthStatus:
+    return keycloak_openid.has_uma_access(token, "infer_endpoint#doInfer")
 
 
 async def check_token(token: str = Depends(oauth2_scheme)) -> None:
-    if not await is_token_correct(token):
+    auth_status = await get_token_status(token)
+    if not auth_status.is_logged_in:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-
-@app.post("/auth")
-async def auth(form: OAuth2PasswordRequestForm = Depends()) -> dict[str, str]:
-    """Issue access token for Swagger OAuth2 and API clients."""
-    if form.password != "00000":
+    if not auth_status.is_authorized:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+            headers={"WWW-Authenticate": "Bearer"},
         )
-    return {"access_token": "00000", "token_type": "bearer"}
 
 
 @app.get("/healthcheck")
