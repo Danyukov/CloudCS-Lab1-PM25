@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service-inference
+  labels:
+    env: pm25
+spec:
+  selector:
+    app: my-inference
+  ports:
+    - name: inference
+      protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: ClusterIP

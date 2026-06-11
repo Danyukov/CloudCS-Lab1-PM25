@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-inference-deployment
+  labels:
+    env: pm25
+    app: inference
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-inference
+  template:
+    metadata:
+      labels:
+        app: my-inference
+    spec:
+      containers:
+        - name: container-inference
+          image: danyukov/cloud-cs-pm25:inference-service
+          ports:
+            - containerPort: 8000

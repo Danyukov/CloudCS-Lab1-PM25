@@ -1,0 +1,290 @@
+# PM2.5 Lab 3 — postgres + Keycloak + inference (по образцу CloudCS-Lab3)
+# Перед apply: ingress-nginx + строки в hosts (см. k8s/README.md)
+# kubectl apply -f k8s/all-services.yaml
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pm25-secrets
+type: Opaque
+stringData:
+  postgres-password: REPLACE_WITH_POSTGRES_PASSWORD
+  keycloak-admin-password: REPLACE_WITH_KEYCLOAK_ADMIN_PASSWORD
+  client-secret: REPLACE_WITH_INFERENCE_CLIENT_SECRET
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-postgres-deployment
+  labels:
+    env: pm25
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-postgres
+  template:
+    metadata:
+      labels:
+        app: my-postgres
+    spec:
+      containers:
+        - name: container-postgres
+          image: postgres:15.2
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pm25-secrets
+                  key: postgres-password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service-postgres
+  labels:
+    env: pm25
+spec:
+  selector:
+    app: my-postgres
+  ports:
+    - name: postgres
+      protocol: TCP
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-keycloak-deployment
+  labels:
+    env: pm25
+    app: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-keycloak
+  template:
+    metadata:
+      labels:
+        app: my-keycloak
+    spec:
+      containers:
+        - name: container-keycloak
+          image: danyukov/cloud-cs-pm25:keycloak
+          imagePullPolicy: IfNotPresent
+          args:
+            - start
+            - --optimized
+          ports:
+            - containerPort: 8080
+            - containerPort: 8443
+          env:
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pm25-secrets
+                  key: postgres-password
+            - name: KEYCLOAK_ADMIN
+              value: admin
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pm25-secrets
+                  key: keycloak-admin-password
+            - name: KC_HOSTNAME_URL
+              value: https://keycloak.local
+            - name: KC_HOSTNAME_ADMIN_URL
+              value: https://keycloak.local
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+            - name: KC_HOSTNAME_STRICT_HTTPS
+              value: "false"
+            - name: KC_PROXY
+              value: edge
+            - name: KC_DB_URL
+              value: jdbc:postgresql://my-service-postgres:5432/postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service-keycloak
+  labels:
+    env: pm25
+spec:
+  selector:
+    app: my-keycloak
+  ports:
+    - name: keycloak-http
+      protocol: TCP
+      port: 80
+      targetPort: 8080
+    - name: keycloak-https
+      protocol: TCP
+      port: 8443
+      targetPort: 8443
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-inference-deployment
+  labels:
+    env: pm25
+    app: inference
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-inference
+  template:
+    metadata:
+      labels:
+        app: my-inference
+    spec:
+      containers:
+        - name: container-inference
+          image: danyukov/cloud-cs-pm25:inference-service
+          ports:
+            - containerPort: 8000
+          env:
+            - name: MODEL_PATH
+              value: /models/pipeline.pkl
+            - name: KEYCLOAK_URL
+              value: https://my-service-keycloak:8443
+            - name: CLIENT_ID
+              value: inference-client
+            - name: CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: pm25-secrets
+                  key: client-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service-inference
+  labels:
+    env: pm25
+spec:
+  selector:
+    app: my-inference
+  ports:
+    - name: inference
+      protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - inference.local
+      secretName: keycloak-local-tls
+  rules:
+    - host: inference.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: my-service-inference
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-keycloak
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "128k"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - keycloak.local
+      secretName: keycloak-local-tls
+  rules:
+    - host: keycloak.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: my-service-keycloak
+                port:
+                  number: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: my-inference-autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: my-inference-deployment
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
